@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { CLAUDE_MODEL_PATTERN } from "@/domain/models";
+import { CLAUDE_CLI_DISALLOWED_TOOLS, createCliSandbox } from "./cli-sandbox";
 import type { AuthMode, RateLimitSnapshot } from "@/domain/types";
 import {
   ProviderRequestError,
@@ -239,10 +240,18 @@ async function runClaudeCliJob(
   const start = Date.now();
   return new Promise<AnthropicStreamResult>((resolve, reject) => {
     // Pass prompt over stdin (`-p` reads stdin) so leading '-' prompts cannot inject flags.
-    const child = spawn("claude", ["-p", "--model", model], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: buildSanitizedCliEnv(),
-    });
+    const sandbox = createCliSandbox();
+    const child = spawn(
+      "claude",
+      ["-p", "--model", model, "--disallowedTools", ...CLAUDE_CLI_DISALLOWED_TOOLS],
+      {
+        cwd: sandbox.cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: buildSanitizedCliEnv(),
+      },
+    );
+    child.once("close", sandbox.cleanup);
+    child.once("error", sandbox.cleanup);
     let outputText = "";
     let stderrText = "";
     let killEscalation: NodeJS.Timeout | null = null;

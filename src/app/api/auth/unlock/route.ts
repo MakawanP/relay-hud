@@ -6,6 +6,8 @@ import {
   clearFailedUnlock,
   createSessionToken,
   getRemotePasscode,
+  getUnlockClientKey,
+  SESSION_TTL_MS,
   recordFailedUnlock,
   verifyPasscode,
 } from "@/server/auth";
@@ -16,14 +18,6 @@ export const dynamic = "force-dynamic";
 const UnlockSchema = z.object({
   passcode: z.string().trim().min(1).max(128),
 });
-
-function getClientKey(request: NextRequest): string {
-  const cfIp = request.headers.get("cf-connecting-ip");
-  if (cfIp) return cfIp.trim();
-  const xff = request.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0]?.trim() || "remote";
-  return request.headers.get("host") || "local";
-}
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const csrfError = verifySameOriginRequest(request, {
@@ -39,7 +33,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const clientKey = getClientKey(request);
+  const clientKey = getUnlockClientKey(request.headers);
   const limit = checkUnlockRateLimit(clientKey);
   if (!limit.allowed) {
     return NextResponse.json(
@@ -88,7 +82,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     sameSite: "lax",
     secure: isHttps,
     path: "/",
-    maxAge: 12 * 60 * 60,
+    maxAge: SESSION_TTL_MS / 1000,
   });
   return res;
 }

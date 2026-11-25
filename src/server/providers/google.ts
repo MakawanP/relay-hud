@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { GOOGLE_MODEL_PATTERN } from "@/domain/models";
+import { buildSanitizedCliEnv, createCliSandbox } from "./cli-sandbox";
 import type { AuthMode } from "@/domain/types";
 
 export interface ProviderProbeResult {
@@ -37,13 +38,7 @@ export class ProviderRequestError extends Error {
   }
 }
 
-export function buildSanitizedCliEnv(): NodeJS.ProcessEnv {
-  const safe: NodeJS.ProcessEnv = { ...process.env };
-  delete safe.GOOGLE_OAUTH_CLIENT_SECRET;
-  delete safe.GOOGLE_OAUTH_CLIENT_ID;
-  delete safe.RELAY_HUD_MASTER_KEY;
-  return safe;
-}
+export { buildSanitizedCliEnv } from "./cli-sandbox";
 
 interface GoogleModelListResponse {
   models?: Array<{
@@ -293,10 +288,14 @@ async function runGoogleCliJob(
   const start = Date.now();
   return new Promise<ProviderStreamResult>((resolve, reject) => {
     // Pass prompt over stdin so prompts starting with '-' can never be parsed as CLI flags.
+    const sandbox = createCliSandbox();
     const child = spawn("gemini", ["-m", model], {
+      cwd: sandbox.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: buildSanitizedCliEnv(),
     });
+    child.once("close", sandbox.cleanup);
+    child.once("error", sandbox.cleanup);
     let outputText = "";
     let stderrText = "";
     let killEscalation: NodeJS.Timeout | null = null;

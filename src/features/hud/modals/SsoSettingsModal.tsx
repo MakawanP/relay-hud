@@ -11,6 +11,8 @@ interface SsoSettingsModalProps {
   ssoConfig: SsoPublicConfig;
   onClose: () => void;
   onRefreshSnapshot: () => Promise<void>;
+  /** Remote sessions can view but not change who is allowed to sign in. */
+  readOnly?: boolean;
 }
 
 export function SsoSettingsModal({
@@ -18,6 +20,7 @@ export function SsoSettingsModal({
   ssoConfig,
   onClose,
   onRefreshSnapshot,
+  readOnly = false,
 }: SsoSettingsModalProps) {
   const [allowedEmailsText, setAllowedEmailsText] = useState("");
   const [allowedDomainsText, setAllowedDomainsText] = useState("");
@@ -200,6 +203,16 @@ export function SsoSettingsModal({
       onClose={onClose}
     >
       <div className="space-y-4">
+        {readOnly ? (
+          <p
+            role="note"
+            className="rounded-lg border border-[#5a4a1e] bg-[#1d1a10] px-3 py-2 text-[11.5px] leading-relaxed text-[#e8cf7a]"
+          >
+            Read-only in remote sessions. Open RelayHUD on this Mac
+            (http://127.0.0.1:3456) to change the allowlist, identity providers
+            or Google OAuth client.
+          </p>
+        ) : null}
         {/* Identity Allowlist */}
         <section className="rounded-lg border border-[#242a36] bg-[#101318] p-4">
           <div className="flex items-center justify-between gap-2">
@@ -336,7 +349,7 @@ export function SsoSettingsModal({
             <button
               type="button"
               disabled={
-                busy || !googleClientId.trim() || !googleClientSecret.trim()
+                readOnly || busy || !googleClientId.trim() || !googleClientSecret.trim()
               }
               onClick={() => void handleSaveGoogleClient()}
               className="min-h-8 rounded-md border border-[#325175] bg-[#15202e] px-3 py-1.5 text-[11px] font-medium text-[#cfe6ff] hover:bg-[#1a293b] disabled:opacity-40"
@@ -495,7 +508,7 @@ export function SsoSettingsModal({
             {oidcIssuer.trim() ? (
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || readOnly}
                 onClick={() => void handleSaveSso(true)}
                 className="min-h-8 rounded-md border border-[#325175] bg-[#15202e] px-3 py-1.5 text-[11.5px] font-medium text-[#cfe6ff] hover:bg-[#1a293b] disabled:opacity-45"
               >
@@ -504,7 +517,7 @@ export function SsoSettingsModal({
             ) : null}
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || readOnly}
               onClick={() => void handleSaveSso(false)}
               className="min-h-8 rounded-md border border-[#448050] bg-[#1d3623] px-4 py-1.5 text-[11.5px] font-semibold text-[#e6f9ea] hover:bg-[#25452c] disabled:opacity-45"
             >

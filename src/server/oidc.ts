@@ -57,6 +57,16 @@ export function generatePkceBundle(): {
   return { nonce, codeVerifier, codeChallenge };
 }
 
+/** Google signs ID tokens with either form of its issuer identifier. */
+export const GOOGLE_ID_TOKEN_ISSUERS: readonly string[] = [
+  "https://accounts.google.com",
+  "accounts.google.com",
+];
+
+function normalizeIssuer(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
 export function safeStringEquals(a: string, b: string): boolean {
   const bufA = Buffer.from(a, "utf8");
   const bufB = Buffer.from(b, "utf8");
@@ -70,7 +80,8 @@ export function safeStringEquals(a: string, b: string): boolean {
 export function parseIdTokenClaims(
   idToken: string,
   expected: {
-    issuer?: string;
+    /** Accepted `iss` values. When given, a missing or different `iss` is rejected. */
+    issuer?: string | readonly string[];
     clientId: string;
     nonce?: string;
   },
@@ -92,7 +103,10 @@ export function parseIdTokenClaims(
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
-  if (typeof payload.exp === "number" && payload.exp <= nowSec - 60) {
+  if (typeof payload.exp !== "number") {
+    throw new Error("OIDC id_token is missing an exp claim.");
+  }
+  if (payload.exp <= nowSec - 60) {
     throw new Error("OIDC id_token is expired.");
   }
 
@@ -104,10 +118,14 @@ export function parseIdTokenClaims(
     throw new Error("OIDC id_token audience mismatch.");
   }
 
-  if (expected.issuer && typeof payload.iss === "string") {
-    const normActual = payload.iss.replace(/\/+$/, "");
-    const normExpected = expected.issuer.replace(/\/+$/, "");
-    if (normActual !== normExpected) {
+  if (expected.issuer !== undefined) {
+    const accepted = (
+      typeof expected.issuer === "string" ? [expected.issuer] : expected.issuer
+    ).map(normalizeIssuer);
+    if (
+      typeof payload.iss !== "string" ||
+      !accepted.includes(normalizeIssuer(payload.iss))
+    ) {
       throw new Error("OIDC id_token issuer mismatch.");
     }
   }
@@ -221,6 +239,13 @@ export async function discoverOidcProvider(
   const parsed = DiscoverySchema.safeParse(await res.json());
   if (!parsed.success) {
     throw new Error("OIDC discovery document is missing required endpoints.");
+  }
+
+  // OIDC Discovery 1.0 §4.3: the returned issuer MUST equal the issuer URL used for discovery.
+  if (normalizeIssuer(parsed.data.issuer) !== normalizedIssuer) {
+    throw new Error(
+      `OIDC discovery issuer "${parsed.data.issuer}" does not match the configured issuer "${normalizedIssuer}".`,
+    );
   }
 
   const doc: OidcDiscoveryDocument = {

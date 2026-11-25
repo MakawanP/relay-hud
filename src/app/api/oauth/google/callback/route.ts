@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  SESSION_COOKIE_NAME,
-  isLoopbackHost,
-  isRemoteAuthConfigured,
-  resolvePublicOrigin,
-  verifySessionToken,
-} from "@/server/auth";
+import { resolvePublicOrigin } from "@/server/auth";
+import { requireAuthenticatedRequest } from "@/server/csrf";
 import { safeStringEquals } from "@/server/oidc";
 import { getJobRunner } from "@/server/runner";
 import { getHudStore } from "@/server/store";
@@ -25,28 +20,8 @@ const GoogleUserInfoSchema = z.object({
 });
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const hostHeader = (request.headers.get("host") ?? "").trim();
-  if (!hostHeader) {
-    return NextResponse.json(
-      { error: "Forbidden: Missing Host header." },
-      { status: 403 },
-    );
-  }
-  if (!isLoopbackHost(hostHeader)) {
-    if (!isRemoteAuthConfigured()) {
-      return NextResponse.json(
-        { error: "Forbidden: RelayHUD only accepts local loopback requests." },
-        { status: 403 },
-      );
-    }
-    const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-    if (!verifySessionToken(token)) {
-      return NextResponse.json(
-        { error: "Unauthorized: Passcode or SSO sign-in required." },
-        { status: 401 },
-      );
-    }
-  }
+  const authError = requireAuthenticatedRequest(request);
+  if (authError) return authError;
 
   const origin = resolvePublicOrigin(request.headers, request.nextUrl.origin);
   const isHttps = origin.startsWith("https://");

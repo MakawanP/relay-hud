@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -54,7 +55,11 @@ interface EncryptedEnvelope {
   ciphertext: string;
 }
 
-const DEFAULT_DATA_DIR = path.join(process.cwd(), ".data");
+/** RelayHUD's data folder: RELAY_HUD_DATA_DIR when set, otherwise `.data/` in the working directory. */
+export function resolveDataDir(): string {
+  const fromEnv = process.env.RELAY_HUD_DATA_DIR?.trim();
+  return fromEnv ? path.resolve(fromEnv) : path.join(process.cwd(), ".data");
+}
 const HEX_PATTERN = /^[0-9a-f]+$/i;
 
 function ensureDir(dirPath: string): void {
@@ -93,25 +98,136 @@ export function maskSecret(secret: string | undefined | null): string | null {
   return `${prefix}••••${suffix}`;
 }
 
+export type MasterKeyStore = "file" | "keychain";
+
+/**
+ * Picks where the vault master key lives. On macOS it defaults to the login Keychain so the
+ * key is not sitting in the same folder as the ciphertext it protects. Set
+ * RELAY_HUD_KEYCHAIN=off to keep the legacy `.data/master.key` file.
+ */
+export function resolveDefaultKeyStore(): MasterKeyStore {
+  if (process.env.RELAY_HUD_KEYCHAIN?.trim().toLowerCase() === "off") return "file";
+  return process.platform === "darwin" ? "keychain" : "file";
+}
+
+const KEYCHAIN_ACCOUNT = "vault-master-key";
+const KEYCHAIN_ITEM_NOT_FOUND = 44;
+
+function keychainServiceFor(dataDir: string): string {
+  const digest = crypto
+    .createHash("sha256")
+    .update(path.resolve(dataDir))
+    .digest("hex")
+    .slice(0, 12);
+  return `relay-hud:${digest}`;
+}
+
+function readKeychainKey(service: string): string | null {
+  try {
+    return execFileSync(
+      "security",
+      ["find-generic-password", "-s", service, "-a", KEYCHAIN_ACCOUNT, "-w"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 5000 },
+    ).trim();
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status === KEYCHAIN_ITEM_NOT_FOUND) return null;
+    throw new Error(
+      `Unable to read the RelayHUD vault key from macOS Keychain: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+function writeKeychainKey(service: string, hex: string): void {
+  execFileSync(
+    "security",
+    [
+      "add-generic-password",
+      "-s",
+      service,
+      "-a",
+      KEYCHAIN_ACCOUNT,
+      "-l",
+      "RelayHUD vault master key",
+      "-w",
+      hex,
+      "-U",
+    ],
+    { stdio: ["ignore", "ignore", "pipe"], timeout: 5000 },
+  );
+}
+
 export class LocalCredentialVault {
+  private readonly dataDir: string;
   private readonly keyPath: string;
   private readonly vaultPath: string;
+  private readonly keyStore: MasterKeyStore;
+  private masterKey: Buffer | null = null;
   private cachedPayload: VaultPayload | null = null;
   private cachedMtimeMs: number | null = null;
 
-  constructor(dataDir: string = DEFAULT_DATA_DIR) {
+  constructor(
+    dataDir: string = resolveDataDir(),
+    options: { keyStore?: MasterKeyStore } = {},
+  ) {
+    this.dataDir = dataDir;
     this.keyPath = path.join(dataDir, "master.key");
     this.vaultPath = path.join(dataDir, "vault.enc");
+    this.keyStore = options.keyStore ?? "file";
   }
 
   private getOrCreateMasterKey(): Buffer {
-    const readKey = (): Buffer => {
-      const hex = fs.readFileSync(this.keyPath, "utf8").trim();
-      if (!HEX_PATTERN.test(hex) || hex.length !== 64) {
-        throw new Error("Vault master key is corrupted (invalid length).");
-      }
-      return Buffer.from(hex, "hex");
-    };
+    if (!this.masterKey) {
+      this.masterKey =
+        this.keyStore === "keychain"
+          ? this.getOrCreateKeychainKey()
+          : this.getOrCreateFileKey();
+    }
+    return this.masterKey;
+  }
+
+  private parseHexKey(hex: string, source: string): Buffer {
+    if (!HEX_PATTERN.test(hex) || hex.length !== 64) {
+      throw new Error(`Vault master key in ${source} is corrupted (invalid length).`);
+    }
+    return Buffer.from(hex, "hex");
+  }
+
+  private getOrCreateKeychainKey(): Buffer {
+    const service = keychainServiceFor(this.dataDir);
+    const existing = readKeychainKey(service);
+    if (existing) return this.parseHexKey(existing, "macOS Keychain");
+
+    // First run on Keychain: migrate a legacy master.key file if one exists.
+    const legacyHex = fs.existsSync(this.keyPath)
+      ? fs.readFileSync(this.keyPath, "utf8").trim()
+      : null;
+    const key = legacyHex
+      ? this.parseHexKey(legacyHex, this.keyPath)
+      : crypto.randomBytes(32);
+
+    try {
+      writeKeychainKey(service, key.toString("hex"));
+    } catch (err) {
+      console.warn(
+        `[relay-hud] macOS Keychain unavailable (${err instanceof Error ? err.message : String(err)}); falling back to ${this.keyPath}.`,
+      );
+      return this.getOrCreateFileKey();
+    }
+
+    const readBack = readKeychainKey(service);
+    if (readBack !== key.toString("hex")) {
+      throw new Error("macOS Keychain did not return the vault key that was just stored.");
+    }
+    if (legacyHex) {
+      fs.unlinkSync(this.keyPath);
+    }
+    return key;
+  }
+
+  private getOrCreateFileKey(): Buffer {
+    const readKey = (): Buffer =>
+      this.parseHexKey(fs.readFileSync(this.keyPath, "utf8").trim(), this.keyPath);
 
     if (fs.existsSync(this.keyPath)) {
       return readKey();
@@ -146,18 +262,38 @@ export class LocalCredentialVault {
       .slice(0, 32);
   }
 
-  readAll(): VaultPayload {
-    if (!fs.existsSync(this.vaultPath)) {
-      this.cachedPayload = null;
-      this.cachedMtimeMs = null;
-      return { version: 1, accounts: {} };
-    }
-    const stat = fs.statSync(this.vaultPath);
-    if (this.cachedPayload && this.cachedMtimeMs === stat.mtimeMs) {
-      return structuredClone(this.cachedPayload);
-    }
-    const raw = fs.readFileSync(this.vaultPath, "utf8");
-    const envelope = JSON.parse(raw) as Partial<EncryptedEnvelope>;
+  /** Encrypts arbitrary UTF-8 text into the vault's AES-256-GCM JSON envelope. */
+  encryptText(plaintext: string): string {
+    const key = this.getOrCreateMasterKey();
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv, {
+      authTagLength: 16,
+    });
+    const ciphertext = Buffer.concat([
+      cipher.update(plaintext, "utf8"),
+      cipher.final(),
+    ]);
+    const envelope: EncryptedEnvelope = {
+      alg: "aes-256-gcm",
+      iv: iv.toString("hex"),
+      tag: cipher.getAuthTag().toString("hex"),
+      ciphertext: ciphertext.toString("hex"),
+    };
+    return JSON.stringify(envelope, null, 2);
+  }
+
+  /** Returns true when `raw` looks like an envelope produced by encryptText. */
+  static isEncryptedEnvelope(raw: unknown): boolean {
+    return (
+      typeof raw === "object" &&
+      raw !== null &&
+      (raw as Partial<EncryptedEnvelope>).alg === "aes-256-gcm" &&
+      typeof (raw as Partial<EncryptedEnvelope>).ciphertext === "string"
+    );
+  }
+
+  /** Decrypts an envelope (already JSON-parsed) produced by encryptText. */
+  decryptEnvelope(envelope: Partial<EncryptedEnvelope>): string {
     if (
       envelope.alg !== "aes-256-gcm" ||
       typeof envelope.iv !== "string" ||
@@ -182,15 +318,33 @@ export class LocalCredentialVault {
       throw new Error("Vault envelope has invalid IV or GCM auth tag length.");
     }
 
-    const key = this.getOrCreateMasterKey();
-    const decipher = crypto.createDecipheriv("aes-256-gcm", key, ivBuf, {
-      authTagLength: 16,
-    });
+    const decipher = crypto.createDecipheriv(
+      "aes-256-gcm",
+      this.getOrCreateMasterKey(),
+      ivBuf,
+      { authTagLength: 16 },
+    );
     decipher.setAuthTag(tagBuf);
-    const plaintext = Buffer.concat([
+    return Buffer.concat([
       decipher.update(Buffer.from(envelope.ciphertext, "hex")),
       decipher.final(),
     ]).toString("utf8");
+  }
+
+  readAll(): VaultPayload {
+    if (!fs.existsSync(this.vaultPath)) {
+      this.cachedPayload = null;
+      this.cachedMtimeMs = null;
+      return { version: 1, accounts: {} };
+    }
+    const stat = fs.statSync(this.vaultPath);
+    if (this.cachedPayload && this.cachedMtimeMs === stat.mtimeMs) {
+      return structuredClone(this.cachedPayload);
+    }
+    const raw = fs.readFileSync(this.vaultPath, "utf8");
+    const plaintext = this.decryptEnvelope(
+      JSON.parse(raw) as Partial<EncryptedEnvelope>,
+    );
     const parsed = JSON.parse(plaintext) as VaultPayload;
     const normalized: VaultPayload = {
       version: 1,
@@ -204,24 +358,7 @@ export class LocalCredentialVault {
   }
 
   writeAll(payload: VaultPayload): void {
-    const key = this.getOrCreateMasterKey();
-    const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv, {
-      authTagLength: 16,
-    });
-    const plaintext = JSON.stringify(payload);
-    const ciphertext = Buffer.concat([
-      cipher.update(plaintext, "utf8"),
-      cipher.final(),
-    ]);
-    const tag = cipher.getAuthTag();
-    const envelope: EncryptedEnvelope = {
-      alg: "aes-256-gcm",
-      iv: iv.toString("hex"),
-      tag: tag.toString("hex"),
-      ciphertext: ciphertext.toString("hex"),
-    };
-    writeFileSecure(this.vaultPath, JSON.stringify(envelope, null, 2));
+    writeFileSecure(this.vaultPath, this.encryptText(JSON.stringify(payload)));
     this.cachedPayload = structuredClone(payload);
     this.cachedMtimeMs = fs.statSync(this.vaultPath).mtimeMs;
   }
@@ -388,7 +525,9 @@ declare global {
 
 export function getVault(): LocalCredentialVault {
   if (!globalThis.__relayHudVault) {
-    globalThis.__relayHudVault = new LocalCredentialVault();
+    globalThis.__relayHudVault = new LocalCredentialVault(resolveDataDir(), {
+      keyStore: resolveDefaultKeyStore(),
+    });
   }
   return globalThis.__relayHudVault;
 }

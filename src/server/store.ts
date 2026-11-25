@@ -14,7 +14,12 @@ import type {
   RateLimitSnapshot,
   RoutingPolicy,
 } from "@/domain/types";
-import { getVault, maskSecret, type LocalCredentialVault } from "./vault";
+import {
+  LocalCredentialVault,
+  getVault,
+  maskSecret,
+  resolveDataDir,
+} from "./vault";
 
 export interface PersistedAccountMeta {
   id: AccountId;
@@ -297,7 +302,7 @@ export class HudStateStore {
   private readonly recentRequestTimestamps = new Map<AccountId, number[]>();
 
   constructor(
-    dataDir: string = path.join(process.cwd(), ".data"),
+    dataDir: string = resolveDataDir(),
     vault: LocalCredentialVault = getVault(),
   ) {
     this.statePath = path.join(dataDir, "state.json");
@@ -322,7 +327,14 @@ export class HudStateStore {
 
     try {
       const raw = fs.readFileSync(this.statePath, "utf8");
-      const parsed = JSON.parse(raw) as Partial<PersistedHudState> & {
+      const outer: unknown = JSON.parse(raw);
+      // state.json holds prompts and model outputs, so it is encrypted with the vault key.
+      // Older plaintext files are read once and re-encrypted on the next save.
+      const parsed = (
+        LocalCredentialVault.isEncryptedEnvelope(outer)
+          ? JSON.parse(this.vault.decryptEnvelope(outer as Record<string, string>))
+          : outer
+      ) as Partial<PersistedHudState> & {
         version?: number;
       };
       const rawAccounts = parsed.accounts ?? {};
@@ -432,7 +444,9 @@ export class HudStateStore {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     const tmp = `${this.statePath}.${crypto.randomBytes(5).toString("hex")}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.state, null, 2), { mode: 0o600 });
+    fs.writeFileSync(tmp, this.vault.encryptText(JSON.stringify(this.state)), {
+      mode: 0o600,
+    });
     fs.renameSync(tmp, this.statePath);
   }
 

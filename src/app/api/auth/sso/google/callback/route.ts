@@ -8,6 +8,7 @@ import {
   exchangeOidcAuthorizationCode,
   fetchOidcUserInfo,
   isSsoIdentityAllowed,
+  GOOGLE_ID_TOKEN_ISSUERS,
   parseIdTokenClaims,
   safeStringEquals,
 } from "@/server/oidc";
@@ -64,6 +65,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     !state ||
     !cookieState ||
     !codeVerifier ||
+    !expectedNonce ||
     !safeStringEquals(state, cookieState)
   ) {
     return fail("invalid_state");
@@ -98,9 +100,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (exchanged.idToken) {
     try {
       const claims = parseIdTokenClaims(exchanged.idToken, {
-        issuer: "https://accounts.google.com",
+        issuer: GOOGLE_ID_TOKEN_ISSUERS,
         clientId: sso.googleClientId,
-        nonce: expectedNonce || undefined,
+        nonce: expectedNonce,
       });
       email = claims.email;
       emailVerified = claims.emailVerified;

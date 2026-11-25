@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  SESSION_COOKIE_NAME,
-  isLoopbackHost,
-  isRemoteAuthConfigured,
-  resolvePublicOrigin,
-  verifySessionToken,
-} from "@/server/auth";
+import { resolvePublicOrigin } from "@/server/auth";
+import { requireAuthenticatedRequest } from "@/server/csrf";
 import {
   discoverOidcProvider,
   exchangeOidcAuthorizationCode,
@@ -20,28 +15,8 @@ import { getVault } from "@/server/vault";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const hostHeader = (request.headers.get("host") ?? "").trim();
-  if (!hostHeader) {
-    return NextResponse.json(
-      { error: "Forbidden: Missing Host header." },
-      { status: 403 },
-    );
-  }
-  if (!isLoopbackHost(hostHeader)) {
-    if (!isRemoteAuthConfigured()) {
-      return NextResponse.json(
-        { error: "Forbidden: RelayHUD only accepts local loopback requests." },
-        { status: 403 },
-      );
-    }
-    const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-    if (!verifySessionToken(token)) {
-      return NextResponse.json(
-        { error: "Unauthorized: Passcode or SSO sign-in required." },
-        { status: 401 },
-      );
-    }
-  }
+  const authError = requireAuthenticatedRequest(request);
+  if (authError) return authError;
 
   const origin = resolvePublicOrigin(request.headers, request.nextUrl.origin);
   const isHttps = origin.startsWith("https://");
@@ -79,6 +54,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     !state ||
     !cookieState ||
     !codeVerifier ||
+    !expectedNonce ||
     !safeStringEquals(state, cookieState)
   ) {
     return clearAndRedirect("?oauth=error&reason=invalid_state");
@@ -127,7 +103,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const claims = parseIdTokenClaims(exchanged.idToken, {
         issuer: doc.issuer,
         clientId: sso.oidcClientId,
-        nonce: expectedNonce || undefined,
+        nonce: expectedNonce,
       });
       email = claims.email;
     } catch {

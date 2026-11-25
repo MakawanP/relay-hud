@@ -597,6 +597,7 @@ export function RelayHudShell({
         ssoConfig={snapshot.ssoConfig}
         onClose={() => setActiveModal(null)}
         onRefreshSnapshot={fetchSnapshot}
+        readOnly={isRemoteSession}
       />
 
       <DispatchModal

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { verifySameOriginRequest } from "@/server/csrf";
+import { requireLocalAdmin, verifySameOriginRequest } from "@/server/csrf";
 import { getVault } from "@/server/vault";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +13,8 @@ const OAuthConfigSchema = z.object({
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const csrfError = verifySameOriginRequest(request, { requireJson: true });
   if (csrfError) return csrfError;
+  const adminError = requireLocalAdmin(request);
+  if (adminError) return adminError;
 
   let raw: unknown;
   try {
