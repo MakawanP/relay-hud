@@ -5,8 +5,8 @@ import {
   SESSION_COOKIE_NAME,
   getRemotePasscode,
   getSessionInfo,
-  isLoopbackHost,
   isRemoteAuthConfigured,
+  isTrustedLocalRequest,
   resolvePublicOrigin,
 } from "@/server/auth";
 import { buildHudSnapshot } from "@/server/snapshot";
@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const reqHeaders = await headers();
   const host = (reqHeaders.get("host") ?? "127.0.0.1:3456").trim();
-  const remote = !isLoopbackHost(host);
+  const remote = !isTrustedLocalRequest(reqHeaders);
   let sessionUser = null;
 
   if (remote) {

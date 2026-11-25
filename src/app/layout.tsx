@@ -1,18 +1,9 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { GeistMono } from "geist/font/mono";
+import { GeistSans } from "geist/font/sans";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-});
+// Fonts are bundled by the `geist` package, so builds never need network access to Google Fonts.
 
 export const metadata: Metadata = {
   title: "RelayHUD — Multi-Account AI Orchestration HUD",
@@ -28,7 +19,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} dark`}
+      className={`${GeistSans.variable} ${GeistMono.variable} dark`}
     >
       <body className="min-h-[100dvh] bg-[var(--bg-canvas)] text-[var(--text-primary)] selection:bg-[#56b868]/30 selection:text-white">
         {children}

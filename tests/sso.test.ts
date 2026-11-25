@@ -132,14 +132,31 @@ describe("SSO, OIDC & SSRF URL Guards", () => {
 
   it("preserves authenticated email and SSO method inside signed session cookies", () => {
     process.env.RELAY_HUD_REMOTE_PASSCODE = "TEST-PASS-1234-5678";
-    const token = createSessionToken({
-      email: "owner@company.com",
-      method: "oidc_sso",
-    });
-    expect(getSessionInfo(token)).toEqual({
-      email: "owner@company.com",
-      method: "oidc_sso",
-    });
+    process.env.RELAY_HUD_OIDC_ISSUER = "https://idp.company.com";
+    process.env.RELAY_HUD_OIDC_CLIENT_ID = "relay-client";
+    process.env.RELAY_HUD_OIDC_CLIENT_SECRET = "relay-secret";
+    process.env.RELAY_HUD_OIDC_SSO_ENABLED = "true";
+    process.env.RELAY_HUD_SSO_ALLOWED_DOMAINS = "company.com";
+    try {
+      const token = createSessionToken({
+        email: "owner@company.com",
+        method: "oidc_sso",
+      });
+      expect(getSessionInfo(token)).toEqual({
+        email: "owner@company.com",
+        method: "oidc_sso",
+      });
+
+      // Removing the domain from the allowlist revokes the live session immediately.
+      process.env.RELAY_HUD_SSO_ALLOWED_DOMAINS = "other.com";
+      expect(getSessionInfo(token)).toBeNull();
+    } finally {
+      delete process.env.RELAY_HUD_OIDC_ISSUER;
+      delete process.env.RELAY_HUD_OIDC_CLIENT_ID;
+      delete process.env.RELAY_HUD_OIDC_CLIENT_SECRET;
+      delete process.env.RELAY_HUD_OIDC_SSO_ENABLED;
+      delete process.env.RELAY_HUD_SSO_ALLOWED_DOMAINS;
+    }
   });
 
   it("blocks cloud metadata and insecure remote URLs while allowing HTTPS and local Ollama", () => {

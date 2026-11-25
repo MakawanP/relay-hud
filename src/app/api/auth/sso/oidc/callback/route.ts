@@ -64,6 +64,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     !state ||
     !cookieState ||
     !codeVerifier ||
+    !expectedNonce ||
     !safeStringEquals(state, cookieState)
   ) {
     return fail("invalid_state");
@@ -108,7 +109,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const claims = parseIdTokenClaims(exchanged.idToken, {
         issuer: doc.issuer,
         clientId: sso.oidcClientId,
-        nonce: expectedNonce || undefined,
+        nonce: expectedNonce,
       });
       email = claims.email;
       emailVerified = claims.emailVerified;

@@ -29,7 +29,8 @@ class JobRuntimeController {
   private readonly aborters = new Map<string, AbortController>();
 
   constructor() {
-    this.emitter.setMaxListeners(100);
+    // One listener per open job stream; listeners are removed when a stream closes.
+    this.emitter.setMaxListeners(0);
   }
 
   subscribe(jobId: string, listener: (evt: JobStreamEvent) => void): () => void {

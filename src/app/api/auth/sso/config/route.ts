@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { resolvePublicOrigin } from "@/server/auth";
-import { verifySameOriginRequest } from "@/server/csrf";
+import { requireLocalAdmin, verifySameOriginRequest } from "@/server/csrf";
 import { discoverOidcProvider } from "@/server/oidc";
 import { buildPublicSsoConfig } from "@/server/snapshot";
 import { validateOidcIssuerUrl } from "@/server/url-guard";
@@ -33,6 +33,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const csrfError = verifySameOriginRequest(request, { requireJson: true });
   if (csrfError) return csrfError;
+  const adminError = requireLocalAdmin(request);
+  if (adminError) return adminError;
 
   let raw: unknown;
   try {
