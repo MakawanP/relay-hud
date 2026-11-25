@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+:root {
+  --bg-canvas: #101115;
+  --bg-toolbar: #13161c;
+  --bg-panel: #15181d;
+  --bg-card: #14171c;
+  --bg-card-hover: #181c23;
+  --bg-terminal: #0d0f13;
+  --border-subtle: #222630;
+  --border-strong: #2d3340;
+  --accent-green: #56b868;
+  --accent-green-muted: #3e7a4a;
+  --accent-amber: #c48a47;
+  --accent-red: #c2504e;
+  --accent-blue: #4d94d6;
+  --accent-claude: #d97757;
+  --text-primary: #e6eaf0;
+  --text-secondary: #a2acc0;
+  --text-muted: #848ea0;
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-green);
+  outline-offset: 2px;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #262b36;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #353c4c;
+}
+
+@keyframes dashFlow {
+  from {
+    stroke-dashoffset: 36;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.wire-selected-animated {
+  animation: dashFlow 1.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
